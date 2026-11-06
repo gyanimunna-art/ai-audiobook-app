@@ -1,0 +1,6 @@
+{
+  "name": "Ice Fishing Live Wheel",
+  "description": "Mobile portrait Ice Fishing live wheel game with 1:1 leaf bets, Lil' Blues, Big Oranges, and Huge Reds bonus rounds, random multipliers, and rotating live studio presenters.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
