@@ -6,9 +6,11 @@ import {
   CHIP_OPTIONS,
   generateDynamicWinnerFeed,
   generateRoundOutcomePlan,
+  generateFreshInitialBalance,
+  generateFreshHistory,
+  generateNextLiveChatMessage,
   HistoryItem,
   INITIAL_HISTORY,
-  LIVE_CHAT_MESSAGES,
   RoundOutcomePlan,
   WHEEL_SEGMENTS,
   WinnerEntry,
@@ -31,37 +33,16 @@ interface FlyingChip {
   targetSpot: BetSpotId;
 }
 
-const INITIAL_BALANCE = 22280;
-
 export default function App() {
-  // Persistent balance starting at ₹22,280 (exact match to video)
-  const [balance, setBalance] = useState<number>(() => {
-    try {
-      const saved = localStorage.getItem('ice_fishing_balance_v1');
-      if (saved !== null) {
-        const parsed = Number(saved);
-        if (!Number.isNaN(parsed) && parsed >= 0) return parsed;
-      }
-    } catch {
-      // ignore storage errors
-    }
-    return INITIAL_BALANCE;
-  });
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('ice_fishing_balance_v1', String(balance));
-    } catch {
-      // ignore
-    }
-  }, [balance]);
+  // Fresh randomized balance between ₹10,000 and ₹99,990 on every app enter/refresh (as requested by user)
+  const [balance, setBalance] = useState<number>(() => generateFreshInitialBalance());
 
   // Game round state + Pre-computed upcoming round plan (used by both the Wheel Spin and the Floating Ice Predictor!)
   const [phase, setPhase] = useState<RoundPhase>('BETTING');
   const [timeLeft, setTimeLeft] = useState<number>(7);
   const [roundNumber, setRoundNumber] = useState<number>(1);
   const [upcomingPlan, setUpcomingPlan] = useState<RoundOutcomePlan>(() =>
-    generateRoundOutcomePlan(1)
+    generateRoundOutcomePlan(1, INITIAL_HISTORY)
   );
   const [isPredictorVisible, setIsPredictorVisible] = useState<boolean>(true);
 
@@ -120,7 +101,9 @@ export default function App() {
   const [activeRoundWinnerFeed, setActiveRoundWinnerFeed] = useState(() =>
     generateDynamicWinnerFeed(1, 4, 0)
   );
-  const [chatIndex, setChatIndex] = useState<number>(0);
+  const [liveChatMsg, setLiveChatMsg] = useState<{ user: string; text: string }>(() =>
+    generateNextLiveChatMessage('BETTING')
+  );
   const [customChatMsg, setCustomChatMsg] = useState<{ user: string; text: string } | null>(
     null
   );
@@ -176,14 +159,20 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
-  // Live chat ticker
+  // Dynamic Live chat ticker with natural randomized intervals (2.2s - 3.6s) and continuously unique messages
   useEffect(() => {
-    const interval = setInterval(() => {
-      setCustomChatMsg(null);
-      setChatIndex((prev) => (prev + 1) % LIVE_CHAT_MESSAGES.length);
-    }, 2600);
-    return () => clearInterval(interval);
-  }, []);
+    let timerId: ReturnType<typeof setTimeout>;
+    const scheduleNextMsg = () => {
+      const delay = 2200 + Math.floor(Math.random() * 1400);
+      timerId = setTimeout(() => {
+        setCustomChatMsg(null);
+        setLiveChatMsg(generateNextLiveChatMessage(phase));
+        scheduleNextMsg();
+      }, delay);
+    };
+    scheduleNextMsg();
+    return () => clearTimeout(timerId);
+  }, [phase]);
 
   // Spawn flying chip visual
   const triggerFlyingChip = (targetSpot: BetSpotId, value: number) => {
@@ -392,7 +381,7 @@ export default function App() {
     setTimeLeft(9);
 
     if (upcomingPlanRef.current.roundNumber !== roundNumber) {
-      const freshPlan = generateRoundOutcomePlan(roundNumber);
+      const freshPlan = generateRoundOutcomePlan(roundNumber, history);
       upcomingPlanRef.current = freshPlan;
       setUpcomingPlan(freshPlan);
     }
@@ -500,7 +489,16 @@ export default function App() {
 
       // Pre-compute the NEXT round's outcome right away so the Predictor is ready!
       const nextRoundNum = roundNumber + 1;
-      const nextPlan = generateRoundOutcomePlan(nextRoundNum);
+      const nextPlan = generateRoundOutcomePlan(nextRoundNum, [
+        {
+          id: `h-${Date.now()}`,
+          winner: winnerType,
+          multiplier: multUsed,
+          payoutAmount: winReturn,
+          timestamp: ts,
+        },
+        ...history,
+      ]);
       upcomingPlanRef.current = nextPlan;
       setUpcomingPlan(nextPlan);
 
@@ -577,8 +575,8 @@ export default function App() {
       let delta = targetMod - currentMod;
       if (delta < 0) delta += 360;
 
-      const jitter = (Math.random() - 0.5) * (sliceDeg * 0.22);
-      const totalSpinDelta = 360 * 5 + delta + jitter;
+      // Land DEAD-CENTER of the chosen wedge directly under the 12 o'clock crimson flapper pointer
+      const totalSpinDelta = 360 * 5 + delta;
 
       const durationMs = 4800;
       const startTime = performance.now();
@@ -617,6 +615,10 @@ export default function App() {
           rafIdRef.current = window.requestAnimationFrame(animateWheel);
         } else {
           rafIdRef.current = null;
+          // Finalize at exact mathematical center of the winning wedge directly under the flapper
+          const exactFinalDeg = startRot + totalSpinDelta;
+          rotationRef.current = exactFinalDeg;
+          setRotationDeg(exactFinalDeg);
           setSpinSpeedRatio(0);
           setFlapperAngle(0);
           setWinningSegmentIndex(chosenWinnerIndex);
@@ -687,7 +689,7 @@ export default function App() {
     roundTimersRef.current.push(startSpinTimer);
   }, [phase]);
 
-  const activeChat = customChatMsg || LIVE_CHAT_MESSAGES[chatIndex];
+  const activeChat = customChatMsg || liveChatMsg;
   const isBettingPhase = phase === 'BETTING';
 
   // Radial positions for the 6 chips when the chip selector is opened
